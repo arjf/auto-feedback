@@ -373,10 +373,6 @@ streamlit run app/dashboard.py
 
 This project is licensed under the MIT License.
 
-## 👨‍💻 Author
-
-Created with ❤️ for sentiment analysis and AI applications.
-
 ## 🙏 Acknowledgments
 
 - **TextBlob** - Simple text processing
@@ -391,6 +387,6 @@ For issues and questions:
 - Check the troubleshooting section
 - Review the API documentation
 
----
 
-**Happy Analyzing! 🎭📊**
+
+

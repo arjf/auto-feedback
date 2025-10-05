@@ -198,6 +198,6 @@ pip install -r requirements.txt
 - "Average product, met basic expectations."
 - "Works as described, no complaints or praise."
 
----
 
-**Happy Analyzing! 🎭📊**
+
+
