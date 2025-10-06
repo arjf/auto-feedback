@@ -1,19 +1,19 @@
-# 🎭 AI-Powered Sentiment Analysis Web App
+# AI-Powered Sentiment Analysis Web App
 
 A complete sentiment analysis application with Flask REST API, Streamlit dashboard, and Docker support. Analyze customer feedback using AI-powered models (TextBlob and Hugging Face Transformers).
 
-## 📋 Features
+## Features
 
-- ✅ **Flask REST API** - Analyze sentiment via HTTP endpoints
-- ✅ **Streamlit Dashboard** - Interactive web interface with real-time analysis
-- ✅ **Multiple AI Models** - TextBlob (fast) and Transformers (accurate)
-- ✅ **Real-time Analysis** - Instant sentiment classification
-- ✅ **Visualization** - Charts and graphs for sentiment trends
-- ✅ **History Tracking** - Track and export analysis history
-- ✅ **Docker Support** - Containerized deployment
-- ✅ **API Endpoints** - RESTful API with comprehensive endpoints
+- **Flask REST API** - Analyze sentiment via HTTP endpoints
+- **Streamlit Dashboard** - Interactive web interface with real-time analysis
+- **Multiple AI Models** - TextBlob (fast) and Transformers (accurate)
+- **Real-time Analysis** - Instant sentiment classification
+- **Visualization** - Charts and graphs for sentiment trends
+- **History Tracking** - Track and export analysis history
+- **Docker Support** - Containerized deployment
+- **API Endpoints** - RESTful API with comprehensive endpoints
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
 auto-feedback/
@@ -27,7 +27,7 @@ auto-feedback/
 └── README.md          # This file
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -64,7 +64,7 @@ pip install -r requirements.txt
 python -m textblob.download_corpora
 ```
 
-## 💻 Running Locally
+## Running Locally
 
 ### Option 1: Run Flask API Only
 
@@ -105,7 +105,7 @@ Now you can:
 - Access the API at `http://localhost:5000`
 - Access the Dashboard at `http://localhost:8501`
 
-## 🐳 Running with Docker
+## Running with Docker
 
 ### Build the Docker image:
 ```bash
@@ -126,7 +126,7 @@ Access:
 - Streamlit Dashboard: `http://localhost:8501`
 - Flask API: `http://localhost:5000`
 
-## 📡 API Endpoints
+## API Endpoints
 
 ### `GET /`
 Get API information and available endpoints.
@@ -208,7 +208,7 @@ Health check endpoint.
 }
 ```
 
-## 🎨 Using the Streamlit Dashboard
+## Using the Streamlit Dashboard
 
 1. **Navigate to** `http://localhost:8501`
 
@@ -233,10 +233,10 @@ Health check endpoint.
    - Download history as CSV
    - Clear history
 
-## 🧠 AI Models
+## AI Models
 
 ### TextBlob (Default)
-- **Speed:** Fast ⚡
+- **Speed:** Fast
 - **Accuracy:** Good for general use
 - **Requirements:** Lightweight, no GPU needed
 - **Best for:** Quick analysis, real-time feedback
@@ -248,7 +248,7 @@ Health check endpoint.
 - **Model:** DistilBERT fine-tuned on SST-2
 - **Best for:** Detailed analysis, high accuracy needs
 
-## 📦 Dependencies
+## Dependencies
 
 Main dependencies:
 - **Flask 3.0.0** - Web framework for API
@@ -261,7 +261,7 @@ Main dependencies:
 
 See `requirements.txt` for complete list.
 
-## 🔧 Configuration
+## Configuration
 
 ### Changing API Port
 Edit `app/main.py`:
@@ -281,7 +281,7 @@ Edit `app/model.py`:
 default_analyzer = SentimentAnalyzer(model_type="transformers")  # or "textblob"
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Issue: "Cannot connect to API"
 - Ensure Flask server is running on port 5000
@@ -302,7 +302,7 @@ default_analyzer = SentimentAnalyzer(model_type="transformers")  # or "textblob"
 - Windows: `netstat -ano | findstr :5000` then kill process
 - macOS/Linux: `lsof -ti:5000 | xargs kill -9`
 
-## 📊 Sample Use Cases
+## Sample Use Cases
 
 1. **Customer Support:** Analyze customer feedback to prioritize urgent negative reviews
 2. **Product Reviews:** Aggregate sentiment from product reviews
@@ -310,7 +310,7 @@ default_analyzer = SentimentAnalyzer(model_type="transformers")  # or "textblob"
 4. **Survey Analysis:** Quickly classify open-ended survey responses
 5. **Email Triage:** Categorize incoming emails by sentiment
 
-## 🔐 Security Notes
+## Security Notes
 
 - This is a development setup - not production-ready
 - Enable authentication before deploying publicly
@@ -318,7 +318,7 @@ default_analyzer = SentimentAnalyzer(model_type="transformers")  # or "textblob"
 - Implement rate limiting for production API
 - Add HTTPS/SSL for production deployments
 
-## 🚢 Deployment
+## Deployment
 
 ### Deploy to Cloud
 
@@ -340,7 +340,7 @@ docker push username/sentiment-analysis-app
 - Configure environment variables
 - Set up load balancing if needed
 
-## 📝 Testing
+## Testing
 
 ### Test the Model:
 ```bash
@@ -362,25 +362,25 @@ curl -X POST http://localhost:5000/analyze \
 streamlit run app/dashboard.py
 ```
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
 4. Submit a pull request
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **TextBlob** - Simple text processing
 - **Hugging Face** - State-of-the-art NLP models
 - **Streamlit** - Beautiful data apps
 - **Flask** - Lightweight web framework
 
-## 📞 Support
+## Support
 
 For issues and questions:
 - Open an issue on GitHub

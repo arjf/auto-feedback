@@ -14,17 +14,17 @@ def test_api_connection():
     try:
         response = requests.get(f"{API_URL}/health", timeout=5)
         if response.status_code == 200:
-            print("✅ API is running and healthy")
+            print(" API is running and healthy")
             return True
         else:
-            print("❌ API returned error status")
+            print("API returned error status")
             return False
     except requests.exceptions.ConnectionError:
-        print("❌ Cannot connect to API. Make sure Flask server is running.")
+        print("Cannot connect to API. Make sure Flask server is running.")
         print("   Start it with: python app/main.py")
         return False
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         return False
 
 
@@ -44,7 +44,7 @@ def analyze_single_text(text, model="textblob"):
         
         if response.status_code == 200:
             result = response.json()
-            print(f"✅ Sentiment: {result.get('sentiment')}")
+            print(f" Sentiment: {result.get('sentiment')}")
             print(f"   Confidence: {result.get('confidence')}%")
             if 'polarity' in result:
                 print(f"   Polarity: {result.get('polarity')}")
@@ -53,10 +53,10 @@ def analyze_single_text(text, model="textblob"):
             return result
         else:
             error = response.json()
-            print(f"❌ Error: {error.get('message', 'Unknown error')}")
+            print(f"Error: {error.get('message', 'Unknown error')}")
             return None
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         return None
 
 
@@ -96,10 +96,10 @@ def get_statistics():
             
             return stats
         else:
-            print("❌ Could not fetch statistics")
+            print("Could not fetch statistics")
             return None
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         return None
 
 
@@ -124,10 +124,10 @@ def get_history(limit=10):
             
             return history
         else:
-            print("❌ Could not fetch history")
+            print("Could not fetch history")
             return None
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         return None
 
 

@@ -1,4 +1,4 @@
-# 🚀 Quick Start Guide
+# Quick Start Guide
 
 ## Fastest Way to Get Started
 
@@ -94,23 +94,23 @@ Invoke-RestMethod -Uri http://localhost:5000/analyze -Method Post -ContentType "
 
 ## What You Get
 
-✅ **Flask API** - RESTful API for sentiment analysis
+**Flask API** - RESTful API for sentiment analysis
 - POST /analyze - Analyze sentiment
 - GET /stats - View statistics
 - GET /history - View analysis history
 - GET /health - Health check
 
-✅ **Streamlit Dashboard** - Interactive web interface
+**Streamlit Dashboard** - Interactive web interface
 - Real-time sentiment analysis
 - Visual charts and graphs
 - Sentiment trends over time
 - Export history to CSV
 
-✅ **Two AI Models**
+**Two AI Models**
 - **TextBlob** - Fast, lightweight (default)
 - **Transformers** - Accurate, ML-based (DistilBERT)
 
-✅ **Docker Support** - Containerized deployment
+**Docker Support** - Containerized deployment
 ```bash
 docker build -t sentiment-app .
 docker run -p 8501:8501 sentiment-app
@@ -121,18 +121,18 @@ docker run -p 8501:8501 sentiment-app
 ```
 auto-feedback/
 ├── app/
-│   ├── main.py          ⭐ Flask API server
-│   ├── model.py         ⭐ Sentiment analysis models
-│   └── dashboard.py     ⭐ Streamlit dashboard
-├── examples.py          📘 Example API usage
-├── start.bat           🚀 Windows startup script
-├── start.sh            🚀 Unix startup script
-├── requirements.txt    📦 Python dependencies
-├── Dockerfile          🐳 Docker configuration
-├── .gitignore         🚫 Git ignore patterns
-├── README.md          📖 Full documentation
-├── GITHUB_SETUP.md    🌐 GitHub integration guide
-└── QUICKSTART.md      ⚡ This file
+│   ├── main.py          Flask API server
+│   ├── model.py         Sentiment analysis models
+│   └── dashboard.py     Streamlit dashboard
+├── examples.py          Example API usage
+├── start.bat           Windows startup script
+├── start.sh            Unix startup script
+├── requirements.txt    Python dependencies
+├── Dockerfile          Docker configuration
+├── .gitignore         Git ignore patterns
+├── README.md          Full documentation
+├── GITHUB_SETUP.md    GitHub integration guide
+└── QUICKSTART.md      This file
 ```
 
 ## Common Issues
@@ -167,19 +167,19 @@ pip install -r requirements.txt
 
 ## Next Steps
 
-1. ✅ **Test locally** - Use `start.bat` or `start.sh`
-2. 📊 **Try the dashboard** - http://localhost:8501
-3. 🧪 **Run examples** - `python examples.py`
-4. 🌐 **Push to GitHub** - See `GITHUB_SETUP.md`
-5. 🐳 **Deploy with Docker** - See `README.md`
-6. 🚀 **Deploy to cloud** - Heroku, AWS, Azure, GCP
+1. **Test locally** - Use `start.bat` or `start.sh`
+2. **Try the dashboard** - http://localhost:8501
+3. **Run examples** - `python examples.py`
+4. **Push to GitHub** - See `GITHUB_SETUP.md`
+5. **Deploy with Docker** - See `README.md`
+6. **Deploy to cloud** - Heroku, AWS, Azure, GCP
 
 ## Need Help?
 
-- 📖 Read `README.md` for full documentation
-- 🌐 See `GITHUB_SETUP.md` for GitHub integration
-- 🐛 Check troubleshooting section in README
-- 💬 Open an issue on GitHub
+- Read `README.md` for full documentation
+- See `GITHUB_SETUP.md` for GitHub integration
+- Check troubleshooting section in README
+- Open an issue on GitHub
 
 ## Sample Feedback for Testing
 

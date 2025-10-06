@@ -14,7 +14,7 @@ import time
 # Configure page
 st.set_page_config(
     page_title="AI Sentiment Analysis Dashboard",
-    page_icon="🎭",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -60,20 +60,20 @@ def get_sentiment_color(sentiment):
 def get_sentiment_emoji(sentiment):
     """Get emoji for sentiment"""
     emojis = {
-        "Positive": "😊",
-        "Negative": "😞",
-        "Neutral": "😐"
+        "Positive": "",
+        "Negative": "",
+        "Neutral": ""
     }
-    return emojis.get(sentiment, "🤔")
+    return emojis.get(sentiment, "")
 
 
 # Main dashboard
-st.title("🎭 AI-Powered Sentiment Analysis Dashboard")
+st.title("AI-Powered Sentiment Analysis Dashboard")
 st.markdown("Analyze customer feedback and reviews with AI-powered sentiment detection")
 
 # Sidebar
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.header("Settings")
     
     # Model selection
     model_type = st.selectbox(
@@ -89,11 +89,11 @@ with st.sidebar:
     try:
         health_response = requests.get(f"{API_URL}/health", timeout=2)
         if health_response.status_code == 200:
-            st.success("✅ API Connected")
+            st.success("API Connected")
         else:
-            st.error("❌ API Error")
+            st.error("API Error")
     except:
-        st.error("❌ API Offline")
+        st.error("API Offline")
         st.caption("Start Flask server: `python app/main.py`")
     
     st.markdown("---")
@@ -108,13 +108,13 @@ with st.sidebar:
     - **Transformers**: Advanced, ML-based
     
     **Sentiments:**
-    - 😊 Positive
-    - 😞 Negative
-    - 😐 Neutral
+    - Positive
+    - Negative
+    - Neutral
     """)
 
 # Main content area
-tab1, tab2, tab3, tab4 = st.tabs(["📝 Analyze", "📊 Statistics", "📈 Trends", "📜 History"])
+tab1, tab2, tab3, tab4 = st.tabs(["Analyze", "Statistics", "Trends", "History"])
 
 # Tab 1: Analyze
 with tab1:
@@ -150,14 +150,14 @@ with tab1:
                 sample_texts
             )
         
-        analyze_button = st.button("🔍 Analyze Sentiment", type="primary", use_container_width=True)
+        analyze_button = st.button("Analyze Sentiment", type="primary", use_container_width=True)
         
         if analyze_button and feedback_text:
             with st.spinner("Analyzing sentiment..."):
                 result = analyze_text_api(feedback_text, model_type)
                 
                 if "error" in result:
-                    st.error(f"❌ Error: {result['error']}")
+                    st.error(f"Error: {result['error']}")
                 else:
                     # Store result
                     result['timestamp'] = datetime.now().isoformat()
@@ -345,14 +345,14 @@ with tab4:
         # Download button
         csv = history_df.to_csv(index=False)
         st.download_button(
-            label="📥 Download History as CSV",
+            label="Download History as CSV",
             data=csv,
             file_name=f"sentiment_analysis_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
         )
         
         # Clear history button
-        if st.button("🗑️ Clear History", type="secondary"):
+        if st.button("Clear History", type="secondary"):
             st.session_state.analysis_results = []
             st.session_state.sentiment_counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
             st.rerun()
@@ -364,8 +364,8 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #666; padding: 20px;">
-        <p>Built with ❤️ using Streamlit, Flask, and AI</p>
-        <p>© 2025 AI Sentiment Analysis Dashboard</p>
+        <p>Built with Streamlit, Flask, and AI</p>
+        <p>Copyright 2025 AI Sentiment Analysis Dashboard</p>
     </div>
     """,
     unsafe_allow_html=True
