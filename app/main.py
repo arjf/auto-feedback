@@ -4,6 +4,7 @@ Provides REST endpoints for analyzing feedback text
 """
 
 import logging
+import os
 from datetime import datetime
 
 from flask import Flask, jsonify, request
@@ -237,7 +238,16 @@ def internal_error(error):
 
 
 if __name__ == "__main__":
+    # Security: Use environment variables for configuration
+    debug_mode = os.getenv("FLASK_DEBUG", "False").lower() == "true"
+    host = os.getenv("FLASK_HOST", "127.0.0.1")  # Default to localhost for security
+    port = int(os.getenv("FLASK_PORT", "5000"))
+
     logger.info("Starting Flask API server...")
-    logger.info("API available at http://localhost:5000")
+    logger.info(f"API available at http://{host}:{port}")
     logger.info("POST to /analyze to analyze sentiment")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+
+    if debug_mode:
+        logger.warning("Running in DEBUG mode - not recommended for production!")
+
+    app.run(host=host, port=port, debug=debug_mode)
