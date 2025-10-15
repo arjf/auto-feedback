@@ -3,13 +3,14 @@ Streamlit Dashboard for Sentiment Analysis
 Interactive web interface for analyzing feedback sentiment
 """
 
-import streamlit as st
-import requests
+import time
+from datetime import datetime
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
-import time
+import requests
+import streamlit as st
 
 # Configure page
 st.set_page_config(
@@ -95,11 +96,11 @@ with st.sidebar:
     st.info(
         """
     This dashboard uses AI to analyze the sentiment of text feedback.
-    
+
     **Models:**
     - **TextBlob**: Fast, rule-based
     - **Transformers**: Advanced, ML-based
-    
+
     **Sentiments:**
     - Positive
     - Negative
@@ -172,7 +173,7 @@ with tab1:
                     <div style="background-color: {color}20; padding: 20px; border-radius: 10px; border-left: 5px solid {color};">
                         <h2 style="color: {color}; margin: 0;">{emoji} {sentiment}</h2>
                         <p style="font-size: 18px; margin: 10px 0;">Confidence: {confidence}%</p>
-                        <p style="color: #666; margin: 0;">Model: {result.get('model', 'Unknown')}</p>
+                        <p style="color: #666; margin: 0;">Model: {result.get("model", "Unknown")}</p>
                     </div>
                     """,
                         unsafe_allow_html=True,

@@ -1,10 +1,11 @@
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
-from model import analyze_sentiment, SentimentAnalyzer
+from model import SentimentAnalyzer, analyze_sentiment
 
 
 def test_textblob_sentiment_positive():

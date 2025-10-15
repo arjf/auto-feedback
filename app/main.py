@@ -3,11 +3,12 @@ Flask API for Sentiment Analysis
 Provides REST endpoints for analyzing feedback text
 """
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from model import analyze_sentiment
 import logging
 from datetime import datetime
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from model import analyze_sentiment
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

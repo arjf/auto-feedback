@@ -3,9 +3,10 @@ Sentiment Analysis Model Module
 Supports both TextBlob and Hugging Face transformers for sentiment analysis
 """
 
-from textblob import TextBlob
-from typing import Dict, Literal
 import logging
+from typing import Dict, Literal
+
+from textblob import TextBlob
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
