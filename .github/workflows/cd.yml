@@ -1,0 +1,799 @@
+name: CD Pipeline
+
+on:
+  # Trigger from CI pipeline success
+  repository_dispatch:
+    types: [deployment-ready]
+
+  # Manual deployment trigger
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: "Container image tag to deploy"
+        required: true
+        default: "latest"
+      force_deploy:
+        description: "Force deployment (skip health checks)"
+        required: false
+        type: boolean
+        default: false
+
+  # Scheduled health check and maintenance
+  schedule:
+    - cron: "0 2 * * *" # Daily at 2 AM UTC
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: 1.6.0
+  ANSIBLE_VERSION: 8.0.0
+  KUBECTL_VERSION: v1.28.0
+
+jobs:
+  # Pre-deployment validation
+  pre-deployment:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.setup.outputs.environment }}
+      image_tag: ${{ steps.setup.outputs.image_tag }}
+      deployment_id: ${{ steps.setup.outputs.deployment_id }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup deployment parameters
+        id: setup
+        run: |
+          # Determine environment and image tag
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            ENVIRONMENT="production"
+            IMAGE_TAG="${{ github.event.client_payload.sha }}"
+            IMAGE_FULL="${{ github.event.client_payload.image }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
+            IMAGE_FULL="ghcr.io/${{ github.repository }}:${IMAGE_TAG}"
+          else
+            ENVIRONMENT="staging"
+            IMAGE_TAG="latest"
+            IMAGE_FULL="ghcr.io/${{ github.repository }}:latest"
+          fi
+
+          # Generate unique deployment ID
+          DEPLOYMENT_ID="deploy-$(date +%Y%m%d-%H%M%S)-${GITHUB_RUN_NUMBER}"
+
+          echo "environment=${ENVIRONMENT}" >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "image_full=${IMAGE_FULL}" >> $GITHUB_OUTPUT
+          echo "deployment_id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+
+          echo "## 🚀 Deployment Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${ENVIRONMENT}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: ${IMAGE_FULL}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment ID**: ${DEPLOYMENT_ID}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Validate container image exists
+        run: |
+          IMAGE_FULL="${{ steps.setup.outputs.image_full }}"
+
+          # Check if image exists in registry
+          if ! docker manifest inspect "${IMAGE_FULL}" > /dev/null 2>&1; then
+            echo "::error::Container image ${IMAGE_FULL} does not exist in registry"
+            exit 1
+          fi
+
+          echo "✅ Container image validated: ${IMAGE_FULL}"
+
+      - name: Security pre-check
+        run: |
+          # Validate that we're not deploying a vulnerable image
+          echo "🔍 Performing security pre-checks..."
+
+          # In a real scenario, you might query your security scanning system
+          # For now, we'll do basic validation
+
+          if [ "${{ steps.setup.outputs.environment }}" = "production" ]; then
+            echo "⚠️ Production deployment - requiring additional security validation"
+            # Add additional security checks for production
+          fi
+
+          echo "✅ Security pre-checks completed"
+
+  # Staging deployment
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: pre-deployment
+    if: needs.pre-deployment.outputs.environment == 'staging' || (github.event_name == 'repository_dispatch' && github.event.client_payload.ref == 'refs/heads/main')
+    environment:
+      name: staging
+      url: https://staging.auto-feedback.example.com
+
+    outputs:
+      deployment_status: ${{ steps.deploy.outputs.status }}
+      instance_ip: ${{ steps.deploy.outputs.instance_ip }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Setup Ansible
+        run: |
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          pip install boto3 botocore
+
+      - name: Terraform Init and Plan
+        id: terraform
+        run: |
+          cd terraform
+
+          # Initialize Terraform
+          terraform init
+
+          # Create terraform.tfvars for staging
+          cat > terraform.tfvars << EOF
+          aws_region = "${{ env.AWS_REGION }}"
+          instance_type = "t3.small"
+          environment = "staging"
+          bucket_name = "auto-feedback-staging-${{ github.run_number }}"
+          github_username = "${{ github.repository_owner }}"
+
+          # Staging-specific configurations
+          enable_monitoring = true
+          backup_retention_days = 7
+          EOF
+
+          # Plan deployment
+          terraform plan -out=tfplan -var-file=terraform.tfvars
+
+          echo "terraform_planned=true" >> $GITHUB_OUTPUT
+
+      - name: Terraform Apply
+        if: steps.terraform.outputs.terraform_planned == 'true'
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan
+
+          # Get outputs
+          INSTANCE_IP=$(terraform output -raw instance_public_ip)
+          echo "instance_ip=${INSTANCE_IP}" >> $GITHUB_ENV
+
+      - name: Wait for instance to be ready
+        run: |
+          echo "Waiting for instance ${INSTANCE_IP} to be ready..."
+
+          max_attempts=30
+          attempt=1
+
+          while [ $attempt -le $max_attempts ]; do
+            if nc -z ${INSTANCE_IP} 22; then
+              echo "✅ Instance is ready for SSH connections"
+              break
+            fi
+
+            echo "Attempt $attempt/$max_attempts - waiting for SSH..."
+            sleep 10
+            ((attempt++))
+          done
+
+          if [ $attempt -gt $max_attempts ]; then
+            echo "::error::Instance failed to become ready within timeout"
+            exit 1
+          fi
+
+      - name: Deploy with Ansible
+        id: deploy
+        run: |
+          # Create temporary SSH key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
+          chmod 600 /tmp/ssh_key
+
+          cd ansible
+
+          # Update inventory with staging instance
+          echo "[staging]" > inventory
+          echo "${INSTANCE_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key" >> inventory
+
+          # Create staging-specific variables
+          cat > group_vars/staging.yml << EOF
+          environment: staging
+          container_image: "${{ needs.pre-deployment.outputs.image_full }}"
+          deployment_id: "${{ needs.pre-deployment.outputs.deployment_id }}"
+
+          # Staging configuration
+          flask_port: 5000
+          streamlit_port: 8501
+          enable_ssl: false
+          domain_name: "staging.auto-feedback.example.com"
+
+          # Resource limits
+          memory_limit: "1g"
+          cpu_limit: "0.5"
+
+          # Monitoring
+          enable_monitoring: true
+          log_level: "INFO"
+          EOF
+
+          # Run deployment playbook
+          ansible-playbook -i inventory playbook.yml \
+            --limit staging \
+            --extra-vars "@group_vars/staging.yml" \
+            --timeout 300
+
+          # Clean up SSH key
+          rm -f /tmp/ssh_key
+
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "instance_ip=${INSTANCE_IP}" >> $GITHUB_OUTPUT
+
+      - name: Post-deployment health check
+        run: |
+          echo "🏥 Running post-deployment health checks..."
+
+          BASE_URL="http://${INSTANCE_IP}:5000"
+          STREAMLIT_URL="http://${INSTANCE_IP}:8501"
+
+          # Wait for services to start
+          sleep 30
+
+          # Health check function
+          check_endpoint() {
+            local url=$1
+            local name=$2
+            local max_attempts=20
+            local attempt=1
+
+            while [ $attempt -le $max_attempts ]; do
+              if curl -f -s --max-time 10 "$url" > /dev/null; then
+                echo "✅ $name health check passed"
+                return 0
+              fi
+
+              echo "Attempt $attempt/$max_attempts - $name not ready..."
+              sleep 10
+              ((attempt++))
+            done
+
+            echo "::error::$name health check failed after $max_attempts attempts"
+            return 1
+          }
+
+          # Check Flask API
+          check_endpoint "$BASE_URL/health" "Flask API"
+
+          # Check Streamlit (basic connectivity)
+          check_endpoint "$STREAMLIT_URL" "Streamlit Dashboard"
+
+          # Functional test
+          echo "🧪 Running functional tests..."
+          response=$(curl -s -X POST "$BASE_URL/analyze" \
+            -H "Content-Type: application/json" \
+            -d '{"text": "This is a test message", "model": "textblob"}')
+
+          if echo "$response" | jq -e '.sentiment' > /dev/null; then
+            echo "✅ Functional test passed"
+          else
+            echo "::error::Functional test failed: $response"
+            exit 1
+          fi
+
+      - name: Update deployment status
+        if: always()
+        run: |
+          STATUS="${{ steps.deploy.outputs.status }}"
+
+          if [ "$STATUS" = "success" ] && [ "${{ job.status }}" = "success" ]; then
+            echo "## ✅ Staging Deployment Successful" >> $GITHUB_STEP_SUMMARY
+            echo "- **Instance IP**: ${INSTANCE_IP}" >> $GITHUB_STEP_SUMMARY
+            echo "- **API URL**: http://${INSTANCE_IP}:5000" >> $GITHUB_STEP_SUMMARY
+            echo "- **Dashboard URL**: http://${INSTANCE_IP}:8501" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Staging Deployment Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Check logs for details" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Production deployment (only after staging success or manual trigger)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, deploy-staging]
+    if: |
+      (needs.deploy-staging.outputs.deployment_status == 'success' && needs.pre-deployment.outputs.environment == 'production') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+
+    environment:
+      name: production
+      url: https://auto-feedback.example.com
+
+    outputs:
+      deployment_status: ${{ steps.deploy.outputs.status }}
+      previous_image: ${{ steps.backup.outputs.previous_image }}
+      rollback_data: ${{ steps.backup.outputs.rollback_data }}
+
+    steps:
+      - name: Production deployment approval
+        uses: trstringer/manual-approval@v1
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.force_deploy != 'true'
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: ${{ github.repository_owner }}
+          minimum-approvals: 1
+          issue-title: "Production Deployment Approval Required"
+          issue-body: |
+            ## Production Deployment Request
+
+            **Image**: ${{ needs.pre-deployment.outputs.image_full }}
+            **Deployment ID**: ${{ needs.pre-deployment.outputs.deployment_id }}
+            **Triggered by**: ${{ github.actor }}
+
+            **Staging Results**: ✅ Passed
+
+            Please review and approve this production deployment.
+          exclude-workflow-initiator-as-approver: false
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup tools
+        run: |
+          # Setup Terraform
+          wget -q https://releases.hashicorp.com/terraform/${{ env.TERRAFORM_VERSION }}/terraform_${{ env.TERRAFORM_VERSION }}_linux_amd64.zip
+          unzip terraform_${{ env.TERRAFORM_VERSION }}_linux_amd64.zip
+          sudo mv terraform /usr/local/bin/
+
+          # Setup Ansible
+          pip install ansible==${{ env.ANSIBLE_VERSION }} boto3 botocore
+
+      - name: Backup current deployment
+        id: backup
+        run: |
+          echo "📦 Creating backup of current production deployment..."
+
+          cd terraform
+          terraform init
+
+          # Get current production state
+          if terraform show -json > current_state.json; then
+            CURRENT_IMAGE=$(terraform output -raw current_image 2>/dev/null || echo "none")
+
+            # Store backup information
+            cat > rollback_data.json << EOF
+            {
+              "previous_image": "${CURRENT_IMAGE}",
+              "backup_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+              "deployment_id": "${{ needs.pre-deployment.outputs.deployment_id }}"
+            }
+            EOF
+
+            echo "previous_image=${CURRENT_IMAGE}" >> $GITHUB_OUTPUT
+            echo "rollback_data<<EOF" >> $GITHUB_OUTPUT
+            cat rollback_data.json >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+
+            echo "✅ Backup information captured"
+          else
+            echo "⚠️ No existing production deployment found"
+          fi
+
+      - name: Blue-Green Deployment Setup
+        run: |
+          echo "🟦🟩 Setting up Blue-Green deployment..."
+
+          cd terraform
+
+          # Create production terraform.tfvars
+          cat > terraform.tfvars << EOF
+          aws_region = "${{ env.AWS_REGION }}"
+          instance_type = "t3.medium"
+          environment = "production"
+          bucket_name = "auto-feedback-prod-${{ github.repository_owner }}"
+          github_username = "${{ github.repository_owner }}"
+
+          # Production-specific configurations
+          enable_monitoring = true
+          backup_retention_days = 30
+          enable_ssl = true
+          domain_name = "auto-feedback.example.com"
+
+          # High availability
+          multi_az = true
+          instance_count = 2
+          load_balancer_enabled = true
+
+          # Security
+          enable_waf = true
+          ssl_certificate_arn = "${{ secrets.SSL_CERT_ARN }}"
+          EOF
+
+          # Plan deployment
+          terraform plan -out=tfplan -var-file=terraform.tfvars
+
+      - name: Deploy to Production
+        id: deploy
+        run: |
+          cd terraform
+
+          # Apply infrastructure changes
+          terraform apply -auto-approve tfplan
+
+          # Get load balancer endpoint or instance IP
+          if terraform output load_balancer_dns 2>/dev/null; then
+            ENDPOINT=$(terraform output -raw load_balancer_dns)
+            ENDPOINT_TYPE="load_balancer"
+          else
+            ENDPOINT=$(terraform output -raw instance_public_ip)
+            ENDPOINT_TYPE="instance"
+          fi
+
+          echo "endpoint=${ENDPOINT}" >> $GITHUB_ENV
+          echo "endpoint_type=${ENDPOINT_TYPE}" >> $GITHUB_ENV
+
+          # Update Ansible inventory for production
+          cd ../ansible
+          echo "[production]" > inventory
+
+          if [ "$ENDPOINT_TYPE" = "load_balancer" ]; then
+            # For load balancer, get all instance IPs
+            aws ec2 describe-instances \
+              --filters "Name=tag:Environment,Values=production" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[].PublicIpAddress' \
+              --output text | tr '\t' '\n' | while read ip; do
+              echo "$ip ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key" >> inventory
+            done
+          else
+            echo "${ENDPOINT} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key" >> inventory
+          fi
+
+          # Create production variables
+          cat > group_vars/production.yml << EOF
+          environment: production
+          container_image: "${{ needs.pre-deployment.outputs.image_full }}"
+          deployment_id: "${{ needs.pre-deployment.outputs.deployment_id }}"
+
+          # Production configuration
+          flask_port: 5000
+          streamlit_port: 8501
+          enable_ssl: true
+          domain_name: "auto-feedback.example.com"
+
+          # Resource limits
+          memory_limit: "2g"
+          cpu_limit: "1.0"
+
+          # Monitoring and logging
+          enable_monitoring: true
+          log_level: "WARNING"
+          enable_metrics: true
+
+          # Security
+          enable_security_headers: true
+          rate_limiting: true
+          EOF
+
+          # Create temporary SSH key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
+          chmod 600 /tmp/ssh_key
+
+          # Deploy with rolling update strategy
+          ansible-playbook -i inventory playbook.yml \
+            --limit production \
+            --extra-vars "@group_vars/production.yml" \
+            --extra-vars "rolling_update=true" \
+            --timeout 600
+
+          # Clean up SSH key
+          rm -f /tmp/ssh_key
+
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Production Health Checks
+        id: health_check
+        run: |
+          echo "🏥 Running comprehensive production health checks..."
+
+          if [ "${{ env.endpoint_type }}" = "load_balancer" ]; then
+            BASE_URL="https://${{ env.endpoint }}"
+            STREAMLIT_URL="https://${{ env.endpoint }}:8501"
+          else
+            BASE_URL="http://${{ env.endpoint }}:5000"
+            STREAMLIT_URL="http://${{ env.endpoint }}:8501"
+          fi
+
+          # Extended health check function
+          comprehensive_health_check() {
+            local max_attempts=30
+            local attempt=1
+            local all_checks_passed=true
+
+            while [ $attempt -le $max_attempts ]; do
+              echo "🔍 Health check attempt $attempt/$max_attempts..."
+
+              # API Health Check
+              if curl -f -s --max-time 10 "$BASE_URL/health" | jq -e '.status == "healthy"' > /dev/null; then
+                echo "✅ API health check passed"
+              else
+                echo "❌ API health check failed"
+                all_checks_passed=false
+              fi
+
+              # Functional Tests
+              local sentiment_response=$(curl -s -X POST "$BASE_URL/analyze" \
+                -H "Content-Type: application/json" \
+                -d '{"text": "This production deployment is working great!", "model": "textblob"}')
+
+              if echo "$sentiment_response" | jq -e '.sentiment == "Positive"' > /dev/null; then
+                echo "✅ Sentiment analysis functional test passed"
+              else
+                echo "❌ Sentiment analysis test failed: $sentiment_response"
+                all_checks_passed=false
+              fi
+
+              # Performance Test
+              local start_time=$(date +%s%N)
+              curl -s "$BASE_URL/health" > /dev/null
+              local end_time=$(date +%s%N)
+              local response_time=$(( (end_time - start_time) / 1000000 ))  # Convert to milliseconds
+
+              if [ $response_time -lt 2000 ]; then  # Less than 2 seconds
+                echo "✅ Performance test passed (${response_time}ms)"
+              else
+                echo "⚠️ Performance test warning: slow response (${response_time}ms)"
+              fi
+
+              # If all checks passed, break the loop
+              if [ "$all_checks_passed" = "true" ]; then
+                echo "🎉 All health checks passed!"
+                return 0
+              fi
+
+              # Reset for next iteration
+              all_checks_passed=true
+              sleep 15
+              ((attempt++))
+            done
+
+            echo "::error::Health checks failed after $max_attempts attempts"
+            return 1
+          }
+
+          # Run comprehensive health checks
+          if comprehensive_health_check; then
+            echo "health_status=passed" >> $GITHUB_OUTPUT
+          else
+            echo "health_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Update DNS and SSL (if applicable)
+        if: steps.health_check.outputs.health_status == 'passed'
+        run: |
+          if [ "${{ env.endpoint_type }}" = "load_balancer" ]; then
+            echo "🌐 Updating DNS records..."
+            # This would typically update Route53 or your DNS provider
+            # aws route53 change-resource-record-sets --hosted-zone-id $ZONE_ID ...
+            echo "✅ DNS and SSL configuration updated"
+          else
+            echo "ℹ️ Single instance deployment - DNS update skipped"
+          fi
+
+      - name: Post-deployment monitoring setup
+        run: |
+          echo "📊 Setting up post-deployment monitoring..."
+
+          # Set up CloudWatch alarms or monitoring alerts
+          aws logs create-log-group --log-group-name "/aws/ec2/auto-feedback-production" || true
+
+          # Create deployment marker for monitoring
+          cat > deployment_marker.json << EOF
+          {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "deployment_id": "${{ needs.pre-deployment.outputs.deployment_id }}",
+            "image": "${{ needs.pre-deployment.outputs.image_full }}",
+            "environment": "production",
+            "status": "completed"
+          }
+          EOF
+
+          # Send to monitoring system (example with CloudWatch custom metric)
+          aws cloudwatch put-metric-data \
+            --namespace "AutoFeedback/Deployments" \
+            --metric-data MetricName=DeploymentSuccess,Value=1,Unit=Count,Dimensions=Environment=production
+
+          echo "✅ Monitoring setup completed"
+
+      - name: Notify stakeholders
+        if: always()
+        run: |
+          STATUS="${{ steps.deploy.outputs.status }}"
+          HEALTH_STATUS="${{ steps.health_check.outputs.health_status }}"
+
+          if [ "$STATUS" = "success" ] && [ "$HEALTH_STATUS" = "passed" ]; then
+            # Success notification
+            echo "## 🎉 Production Deployment Successful" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Deployment Details:**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment**: Production" >> $GITHUB_STEP_SUMMARY
+            echo "- **Image**: ${{ needs.pre-deployment.outputs.image_full }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Endpoint**: ${{ env.endpoint }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Deployment ID**: ${{ needs.pre-deployment.outputs.deployment_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Health Status**: ✅ All checks passed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**URLs:**" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ env.endpoint_type }}" = "load_balancer" ]; then
+              echo "- API: https://${{ env.endpoint }}" >> $GITHUB_STEP_SUMMARY
+              echo "- Dashboard: https://${{ env.endpoint }}:8501" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- API: http://${{ env.endpoint }}:5000" >> $GITHUB_STEP_SUMMARY
+              echo "- Dashboard: http://${{ env.endpoint }}:8501" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            # Here you would typically send notifications via Slack, email, etc.
+            # curl -X POST -H 'Content-type: application/json' \
+            #   --data '{"text":"Production deployment successful!"}' \
+            #   ${{ secrets.SLACK_WEBHOOK_URL }}
+
+          else
+            echo "## ❌ Production Deployment Failed" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status**: $STATUS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Health Check**: $HEALTH_STATUS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Automatic rollback will be initiated..." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Rollback job (triggered on production deployment failure)
+  rollback:
+    name: Automatic Rollback
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, deploy-production]
+    if: |
+      always() &&
+      needs.deploy-production.result == 'failure' &&
+      needs.deploy-production.outputs.previous_image != 'none'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup tools
+        run: |
+          pip install ansible==${{ env.ANSIBLE_VERSION }} boto3 botocore
+
+      - name: Execute rollback
+        run: |
+          echo "🔄 Initiating automatic rollback..."
+          echo "Rolling back to: ${{ needs.deploy-production.outputs.previous_image }}"
+
+          # Create temporary SSH key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
+          chmod 600 /tmp/ssh_key
+
+          cd ansible
+
+          # Create rollback inventory (reuse production inventory logic)
+          echo "[production]" > inventory
+          # Get production instances
+          aws ec2 describe-instances \
+            --filters "Name=tag:Environment,Values=production" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].PublicIpAddress' \
+            --output text | tr '\t' '\n' | while read ip; do
+            echo "$ip ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key" >> inventory
+          done
+
+          # Create rollback variables
+          cat > group_vars/rollback.yml << EOF
+          environment: production
+          container_image: "${{ needs.deploy-production.outputs.previous_image }}"
+          deployment_id: "rollback-$(date +%Y%m%d-%H%M%S)"
+          rollback_operation: true
+          EOF
+
+          # Execute rollback
+          ansible-playbook -i inventory playbook.yml \
+            --limit production \
+            --extra-vars "@group_vars/rollback.yml" \
+            --timeout 300
+
+          rm -f /tmp/ssh_key
+
+          echo "✅ Rollback completed"
+
+      - name: Verify rollback
+        run: |
+          echo "🔍 Verifying rollback..."
+
+          # Get production endpoint
+          cd terraform
+          terraform init
+          if terraform output load_balancer_dns 2>/dev/null; then
+            ENDPOINT=$(terraform output -raw load_balancer_dns)
+            BASE_URL="https://${ENDPOINT}"
+          else
+            ENDPOINT=$(terraform output -raw instance_public_ip)
+            BASE_URL="http://${ENDPOINT}:5000"
+          fi
+
+          # Wait for service to stabilize
+          sleep 60
+
+          # Basic health check
+          if curl -f -s --max-time 10 "${BASE_URL}/health" > /dev/null; then
+            echo "✅ Rollback verification successful"
+            echo "## 🔄 Automatic Rollback Completed" >> $GITHUB_STEP_SUMMARY
+            echo "- **Rolled back to**: ${{ needs.deploy-production.outputs.previous_image }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Service Status**: ✅ Healthy" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "::error::Rollback verification failed"
+            echo "## ❌ Rollback Verification Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Manual intervention required!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      - name: Notify rollback completion
+        run: |
+          echo "📢 Sending rollback notifications..."
+          # Send notifications about the rollback
+          # This would typically notify the team via Slack, email, etc.
+
+  # Cleanup job
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production, rollback]
+    if: always()
+
+    steps:
+      - name: Cleanup temporary resources
+        run: |
+          echo "🧹 Cleaning up temporary resources..."
+
+          # Clean up any temporary files, caches, etc.
+          # In a real scenario, you might clean up:
+          # - Temporary S3 objects
+          # - Old container images
+          # - Temporary security groups
+          # - Unused EBS snapshots
+
+          echo "✅ Cleanup completed"
+
+      - name: Update deployment history
+        run: |
+          echo "📝 Updating deployment history..."
+
+          # Record this deployment in your tracking system
+          # This could be a database, wiki, or

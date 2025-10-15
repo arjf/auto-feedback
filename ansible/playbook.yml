@@ -1,0 +1,645 @@
+---
+# Auto-Feedback Application Deployment Playbook
+# This playbook deploys the auto-feedback sentiment analysis application
+# with comprehensive configuration, security, and monitoring
+
+- name: Deploy Auto-Feedback Application
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Default values (can be overridden by group_vars or extra_vars)
+    app_name: "auto-feedback"
+    app_user: "appuser"
+    app_dir: "/opt/{{ app_name }}"
+    container_image: "ghcr.io/kaushik1919/auto-feedback:latest"
+    environment: "staging"
+    deployment_id: "{{ ansible_date_time.epoch }}"
+
+    # Application configuration
+    flask_host: "0.0.0.0"
+    flask_port: 5000
+    flask_debug: false
+    streamlit_host: "0.0.0.0"
+    streamlit_port: 8501
+    api_url: "http://localhost:{{ flask_port }}"
+
+    # Resource limits
+    memory_limit: "1g"
+    cpu_limit: "1.0"
+
+    # Security and networking
+    enable_ssl: false
+    domain_name: ""
+    cors_origins: "*"
+    rate_limiting: false
+
+    # Monitoring and logging
+    enable_monitoring: true
+    log_level: "INFO"
+    log_retention_days: 7
+
+    # Backup configuration
+    backup_enabled: true
+    backup_retention_days: 7
+
+  pre_tasks:
+    - name: Display deployment information
+      debug:
+        msg: |
+          Starting deployment of {{ app_name }}
+          Environment: {{ environment }}
+          Deployment ID: {{ deployment_id }}
+          Container Image: {{ container_image }}
+          Target Host: {{ inventory_hostname }}
+
+    - name: Verify system requirements
+      assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+          - ansible_distribution_major_version | int >= 20
+          - ansible_memtotal_mb >= 512
+        fail_msg: "System does not meet minimum requirements"
+        success_msg: "System requirements verified"
+
+    - name: Update apt cache
+      apt:
+        update_cache: true
+        cache_valid_time: 300
+      tags: [system, update]
+
+  tasks:
+    # ================================================
+    # System Configuration
+    # ================================================
+    - name: Install essential system packages
+      apt:
+        name:
+          - curl
+          - wget
+          - unzip
+          - jq
+          - htop
+          - tree
+          - vim
+          - git
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - software-properties-common
+          - apt-transport-https
+          - python3
+          - python3-pip
+          - supervisor
+          - nginx
+          - fail2ban
+          - ufw
+          - logrotate
+          - rsync
+          - cron
+        state: present
+        update_cache: true
+      tags: [system, packages]
+
+    - name: Configure timezone to UTC
+      timezone:
+        name: UTC
+      tags: [system, timezone]
+
+    # ================================================
+    # User Management
+    # ================================================
+    - name: Create application user
+      user:
+        name: "{{ app_user }}"
+        system: false
+        shell: /bin/bash
+        home: "/home/{{ app_user }}"
+        create_home: true
+        groups: sudo
+        append: true
+      tags: [users]
+
+    - name: Add application user to docker group
+      user:
+        name: "{{ app_user }}"
+        groups: docker
+        append: true
+      tags: [users, docker]
+      notify: restart docker
+
+    # ================================================
+    # Docker Installation (Modern Method)
+    # ================================================
+    - name: Remove old Docker packages if they exist
+      apt:
+        name:
+          - docker
+          - docker-engine
+          - docker.io
+          - containerd
+          - runc
+        state: absent
+      tags: [docker]
+
+    - name: Create directory for Docker's GPG key
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      tags: [docker]
+
+    - name: Download Docker's official GPG key
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /tmp/docker.gpg
+        mode: "0644"
+      tags: [docker]
+
+    - name: Convert Docker GPG key to binary format
+      shell: gpg --dearmor < /tmp/docker.gpg > /etc/apt/keyrings/docker.gpg
+      creates: /etc/apt/keyrings/docker.gpg
+      tags: [docker]
+
+    - name: Set permissions for Docker GPG key
+      file:
+        path: /etc/apt/keyrings/docker.gpg
+        mode: "0644"
+      tags: [docker]
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+      tags: [docker]
+
+    - name: Install Docker packages
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      tags: [docker]
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+        daemon_reload: true
+      tags: [docker, services]
+
+    - name: Install Docker Compose (standalone)
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/v2.21.0/docker-compose-linux-x86_64"
+        dest: /usr/local/bin/docker-compose
+        mode: "0755"
+        owner: root
+        group: root
+      tags: [docker]
+
+    - name: Create symlink for docker-compose
+      file:
+        src: /usr/local/bin/docker-compose
+        dest: /usr/bin/docker-compose
+        state: link
+      tags: [docker]
+
+    - name: Verify Docker installation
+      command: docker --version
+      register: docker_version
+      changed_when: false
+      tags: [docker, verify]
+
+    - name: Display Docker version
+      debug:
+        msg: "Docker installed: {{ docker_version.stdout }}"
+      tags: [docker, verify]
+
+    # ================================================
+    # Security Configuration
+    # ================================================
+    - name: Configure SSH security
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        backup: true
+      loop:
+        - {
+            regexp: "^#?PasswordAuthentication",
+            line: "PasswordAuthentication no",
+          }
+        - {
+            regexp: "^#?PubkeyAuthentication",
+            line: "PubkeyAuthentication yes",
+          }
+        - { regexp: "^#?PermitRootLogin", line: "PermitRootLogin no" }
+        - { regexp: "^#?MaxAuthTries", line: "MaxAuthTries 3" }
+        - { regexp: "^#?ClientAliveInterval", line: "ClientAliveInterval 300" }
+        - { regexp: "^#?ClientAliveCountMax", line: "ClientAliveCountMax 2" }
+      notify: restart sshd
+      tags: [security, ssh]
+
+    - name: Configure UFW firewall rules
+      ufw:
+        rule: "{{ item.rule }}"
+        port: "{{ item.port | default(omit) }}"
+        proto: "{{ item.proto | default('tcp') }}"
+        comment: "{{ item.comment | default(omit) }}"
+      loop:
+        - { rule: "allow", port: "22", comment: "SSH" }
+        - { rule: "allow", port: "80", comment: "HTTP" }
+        - { rule: "allow", port: "443", comment: "HTTPS" }
+        - { rule: "allow", port: "{{ flask_port }}", comment: "Flask API" }
+        - {
+            rule: "allow",
+            port: "{{ streamlit_port }}",
+            comment: "Streamlit Dashboard",
+          }
+      tags: [security, firewall]
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      tags: [security, firewall]
+
+    - name: Configure fail2ban for SSH protection
+      copy:
+        src: /etc/fail2ban/jail.conf
+        dest: /etc/fail2ban/jail.local
+        remote_src: true
+        backup: true
+      tags: [security, fail2ban]
+
+    - name: Customize fail2ban configuration
+      lineinfile:
+        path: /etc/fail2ban/jail.local
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^bantime\s*=', line: "bantime = 1h" }
+        - { regexp: '^maxretry\s*=', line: "maxretry = 3" }
+        - { regexp: '^findtime\s*=', line: "findtime = 10m" }
+      notify: restart fail2ban
+      tags: [security, fail2ban]
+
+    - name: Start and enable fail2ban
+      systemd:
+        name: fail2ban
+        state: started
+        enabled: true
+      tags: [security, fail2ban, services]
+
+    # ================================================
+    # Application Directory Structure
+    # ================================================
+    - name: Create application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+      loop:
+        - "{{ app_dir }}"
+        - "{{ app_dir }}/config"
+        - "{{ app_dir }}/data"
+        - "{{ app_dir }}/logs"
+        - "{{ app_dir }}/backups"
+        - "/var/log/{{ app_name }}"
+      tags: [application, directories]
+
+    # ================================================
+    # Application Configuration
+    # ================================================
+    - name: Create application environment configuration
+      template:
+        src: app.env.j2
+        dest: "{{ app_dir }}/config/app.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
+        backup: true
+      notify: restart application
+      tags: [application, config]
+
+    - name: Create Docker Compose configuration
+      template:
+        src: docker-compose.yml.j2
+        dest: "{{ app_dir }}/docker-compose.yml"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
+        backup: true
+      notify: restart application
+      tags: [application, config, docker]
+
+    - name: Create health check script
+      template:
+        src: health-check.sh.j2
+        dest: "{{ app_dir }}/health-check.sh"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+      tags: [application, health]
+
+    - name: Create backup script
+      template:
+        src: backup.sh.j2
+        dest: "{{ app_dir }}/backup.sh"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+      when: backup_enabled
+      tags: [application, backup]
+
+    # ================================================
+    # Pull Container Image
+    # ================================================
+    - name: Pull application container image
+      docker_image:
+        name: "{{ container_image }}"
+        source: pull
+        force_source: true
+      become_user: "{{ app_user }}"
+      tags: [docker, image]
+
+    # ================================================
+    # Systemd Service Configuration
+    # ================================================
+    - name: Create systemd service for application
+      template:
+        src: auto-feedback.service.j2
+        dest: "/etc/systemd/system/{{ app_name }}.service"
+        mode: "0644"
+        backup: true
+      notify:
+        - reload systemd
+        - restart application
+      tags: [application, systemd, services]
+
+    # ================================================
+    # Nginx Configuration
+    # ================================================
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: reload nginx
+      tags: [nginx]
+
+    - name: Create nginx configuration for application
+      template:
+        src: nginx.conf.j2
+        dest: "/etc/nginx/sites-available/{{ app_name }}"
+        backup: true
+      notify: reload nginx
+      tags: [nginx, config]
+
+    - name: Enable nginx site
+      file:
+        src: "/etc/nginx/sites-available/{{ app_name }}"
+        dest: "/etc/nginx/sites-enabled/{{ app_name }}"
+        state: link
+      notify: reload nginx
+      tags: [nginx]
+
+    - name: Test nginx configuration
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+      failed_when: nginx_test.rc != 0
+      tags: [nginx, test]
+
+    - name: Start and enable nginx
+      systemd:
+        name: nginx
+        state: started
+        enabled: true
+      tags: [nginx, services]
+
+    # ================================================
+    # Log Rotation Configuration
+    # ================================================
+    - name: Configure log rotation for application
+      template:
+        src: logrotate.j2
+        dest: "/etc/logrotate.d/{{ app_name }}"
+        mode: "0644"
+      tags: [logging, logrotate]
+
+    # ================================================
+    # Monitoring and Cron Jobs
+    # ================================================
+    - name: Set up health check cron job
+      cron:
+        name: "{{ app_name }} health check"
+        minute: "*/5"
+        user: "{{ app_user }}"
+        job: "{{ app_dir }}/health-check.sh >> /var/log/{{ app_name }}/health-check.log 2>&1"
+        state: present
+      tags: [monitoring, cron]
+
+    - name: Set up backup cron job
+      cron:
+        name: "{{ app_name }} backup"
+        minute: "0"
+        hour: "2"
+        user: "{{ app_user }}"
+        job: "{{ app_dir }}/backup.sh >> /var/log/{{ app_name }}/backup.log 2>&1"
+        state: present
+      when: backup_enabled
+      tags: [backup, cron]
+
+    - name: Set up log cleanup cron job
+      cron:
+        name: "{{ app_name }} log cleanup"
+        minute: "0"
+        hour: "3"
+        user: root
+        job: "find /var/log/{{ app_name }} -name '*.log' -mtime +{{ log_retention_days }} -delete"
+        state: present
+      tags: [logging, cron]
+
+    # ================================================
+    # Start Application Services
+    # ================================================
+    - name: Start and enable application service
+      systemd:
+        name: "{{ app_name }}"
+        state: started
+        enabled: true
+        daemon_reload: true
+      tags: [application, services]
+
+    # ================================================
+    # Post-Deployment Verification
+    # ================================================
+    - name: Wait for application to start
+      wait_for:
+        port: "{{ flask_port }}"
+        host: localhost
+        delay: 10
+        timeout: 120
+        msg: "Flask API failed to start within timeout"
+      tags: [verify, health]
+
+    - name: Wait for Streamlit to start
+      wait_for:
+        port: "{{ streamlit_port }}"
+        host: localhost
+        delay: 10
+        timeout: 120
+        msg: "Streamlit dashboard failed to start within timeout"
+      tags: [verify, health]
+
+    - name: Perform application health check
+      uri:
+        url: "http://localhost:{{ flask_port }}/health"
+        method: GET
+        timeout: 10
+      register: health_check_result
+      retries: 5
+      delay: 10
+      until: health_check_result.status == 200
+      tags: [verify, health]
+
+    - name: Verify Streamlit dashboard accessibility
+      uri:
+        url: "http://localhost:{{ streamlit_port }}"
+        method: GET
+        timeout: 10
+        status_code: [200, 301, 302]
+      register: streamlit_check_result
+      retries: 5
+      delay: 10
+      until: streamlit_check_result.status in [200, 301, 302]
+      tags: [verify, health]
+
+    - name: Test sentiment analysis functionality
+      uri:
+        url: "http://localhost:{{ flask_port }}/analyze"
+        method: POST
+        body_format: json
+        body:
+          text: "This is a test deployment and everything is working perfectly!"
+          model: "textblob"
+        timeout: 30
+      register: functional_test_result
+      retries: 3
+      delay: 5
+      until: functional_test_result.status == 200
+      tags: [verify, functional]
+
+    - name: Display deployment summary
+      debug:
+        msg: |
+          Deployment completed successfully!
+
+          Application Details:
+          - Name: {{ app_name }}
+          - Environment: {{ environment }}
+          - Deployment ID: {{ deployment_id }}
+          - Container Image: {{ container_image }}
+
+          Access URLs:
+          - Flask API: http://{{ ansible_default_ipv4.address }}:{{ flask_port }}
+          - Streamlit Dashboard: http://{{ ansible_default_ipv4.address }}:{{ streamlit_port }}
+          - Health Check: http://{{ ansible_default_ipv4.address }}:{{ flask_port }}/health
+
+          System Status:
+          - Docker: {{ docker_version.stdout }}
+          - Application Service: Active
+          - Health Check: {{ 'PASSED' if health_check_result.status == 200 else 'FAILED' }}
+          - Functional Test: {{ 'PASSED' if functional_test_result.status == 200 else 'FAILED' }}
+
+          Log Files:
+          - Application: /var/log/{{ app_name }}/
+          - Health Checks: /var/log/{{ app_name }}/health-check.log
+          - Nginx: /var/log/nginx/
+
+          Useful Commands:
+          - Service Status: sudo systemctl status {{ app_name }}
+          - Application Logs: docker-compose -f {{ app_dir }}/docker-compose.yml logs -f
+          - Health Check: {{ app_dir }}/health-check.sh
+          - Backup: {{ app_dir }}/backup.sh
+      tags: [summary]
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: true
+
+    - name: restart application
+      systemd:
+        name: "{{ app_name }}"
+        state: restarted
+      tags: [handlers]
+
+    - name: restart docker
+      systemd:
+        name: docker
+        state: restarted
+      tags: [handlers]
+
+    - name: restart sshd
+      systemd:
+        name: ssh
+        state: restarted
+      tags: [handlers]
+
+    - name: restart fail2ban
+      systemd:
+        name: fail2ban
+        state: restarted
+      tags: [handlers]
+
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
+      tags: [handlers]
+
+  post_tasks:
+    - name: Clean up temporary files
+      file:
+        path: /tmp/docker.gpg
+        state: absent
+      tags: [cleanup]
+
+    - name: Update package cache one final time
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [cleanup]
+
+    - name: Remove unused packages
+      apt:
+        autoremove: true
+        autoclean: true
+      tags: [cleanup]
+
+    - name: Create deployment completion marker
+      copy:
+        content: |
+          Deployment completed successfully
+          Date: {{ ansible_date_time.iso8601 }}
+          Environment: {{ environment }}
+          Deployment ID: {{ deployment_id }}
+          Container Image: {{ container_image }}
+          Ansible User: {{ ansible_user }}
+          Target Host: {{ inventory_hostname }}
+        dest: "{{ app_dir }}/DEPLOYMENT_SUCCESS"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
+      tags: [completion]

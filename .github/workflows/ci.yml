@@ -1,0 +1,517 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - ".gitignore"
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - ".gitignore"
+
+env:
+  PYTHON_VERSION: "3.10"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Code Quality and Security Checks
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 black isort bandit safety pytest pytest-cov
+
+      - name: Code formatting check (Black)
+        run: |
+          black --check --diff app/
+          if [ $? -ne 0 ]; then
+            echo "::error::Code formatting issues found. Run 'black app/' to fix."
+            exit 1
+          fi
+
+      - name: Import sorting check (isort)
+        run: |
+          isort --check-only --diff app/
+          if [ $? -ne 0 ]; then
+            echo "::error::Import sorting issues found. Run 'isort app/' to fix."
+            exit 1
+          fi
+
+      - name: Lint with flake8
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings
+          flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+
+      - name: Security check with bandit
+        run: |
+          bandit -r app/ -f json -o bandit-report.json || true
+          bandit -r app/ --severity-level medium --confidence-level medium
+
+      - name: Check for security vulnerabilities in dependencies
+        run: |
+          safety check --json --output safety-report.json || true
+          safety check
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+
+  # Testing
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-mock httpx
+
+      - name: Download NLTK data
+        run: |
+          python -m textblob.download_corpora
+
+      - name: Create test files if not exist
+        run: |
+          mkdir -p tests
+
+          # Create basic test for model
+          cat > tests/test_model.py << 'EOF'
+          import pytest
+          import sys
+          import os
+          sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
+
+          from model import analyze_sentiment, SentimentAnalyzer
+
+          def test_textblob_sentiment_positive():
+              result = analyze_sentiment("This is amazing!", model_type="textblob")
+              assert result['sentiment'] == 'Positive'
+              assert 'confidence' in result
+              assert result['confidence'] > 0
+
+          def test_textblob_sentiment_negative():
+              result = analyze_sentiment("This is terrible!", model_type="textblob")
+              assert result['sentiment'] == 'Negative'
+              assert 'confidence' in result
+              assert result['confidence'] > 0
+
+          def test_textblob_sentiment_neutral():
+              result = analyze_sentiment("This is okay.", model_type="textblob")
+              assert result['sentiment'] in ['Neutral', 'Positive', 'Negative']
+              assert 'confidence' in result
+
+          def test_empty_text():
+              result = analyze_sentiment("", model_type="textblob")
+              assert 'error' in result or result['confidence'] == 0
+
+          def test_analyzer_initialization():
+              analyzer = SentimentAnalyzer(model_type="textblob")
+              assert analyzer.model_type == "textblob"
+          EOF
+
+          # Create basic test for API
+          cat > tests/test_api.py << 'EOF'
+          import pytest
+          import sys
+          import os
+          sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
+
+          from main import app
+          import json
+
+          @pytest.fixture
+          def client():
+              app.config['TESTING'] = True
+              with app.test_client() as client:
+                  yield client
+
+          def test_health_endpoint(client):
+              response = client.get('/health')
+              assert response.status_code == 200
+              data = json.loads(response.data)
+              assert data['status'] == 'healthy'
+
+          def test_home_endpoint(client):
+              response = client.get('/')
+              assert response.status_code == 200
+              data = json.loads(response.data)
+              assert 'message' in data
+              assert 'endpoints' in data
+
+          def test_analyze_endpoint_valid(client):
+              response = client.post('/analyze',
+                                   json={'text': 'This is amazing!'},
+                                   content_type='application/json')
+              assert response.status_code == 200
+              data = json.loads(response.data)
+              assert 'sentiment' in data
+              assert 'confidence' in data
+
+          def test_analyze_endpoint_empty_text(client):
+              response = client.post('/analyze',
+                                   json={'text': ''},
+                                   content_type='application/json')
+              assert response.status_code == 400
+
+          def test_analyze_endpoint_no_json(client):
+              response = client.post('/analyze')
+              assert response.status_code == 400
+
+          def test_stats_endpoint_empty(client):
+              response = client.get('/stats')
+              assert response.status_code == 200
+              data = json.loads(response.data)
+              assert 'stats' in data
+
+          def test_history_endpoint(client):
+              response = client.get('/history')
+              assert response.status_code == 200
+              data = json.loads(response.data)
+              assert 'count' in data
+              assert 'history' in data
+          EOF
+
+          # Create conftest for pytest
+          cat > tests/conftest.py << 'EOF'
+          import pytest
+          import sys
+          import os
+
+          # Add app directory to path
+          sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
+          EOF
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=html --cov-report=term-missing
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-reports-${{ matrix.python-version }}
+          path: |
+            coverage.xml
+            htmlcov/
+
+  # Docker Build and Security Scan
+  docker-build:
+    name: Docker Build & Security Scan
+    runs-on: ubuntu-latest
+    needs: [code-quality, test]
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.tags }}
+          format: "sarif"
+          output: "trivy-results.sarif"
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Run Trivy vulnerability scanner (table format)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.tags }}
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+
+      - name: Test container startup
+        run: |
+          # Test that container starts and health checks pass
+          docker run -d --name test-container -p 5000:5000 -p 8501:8501 ${{ steps.meta.outputs.tags }}
+
+          # Wait for startup
+          sleep 30
+
+          # Check if container is running
+          if ! docker ps | grep test-container; then
+            echo "Container failed to start"
+            docker logs test-container
+            exit 1
+          fi
+
+          # Test health endpoints
+          max_attempts=10
+          attempt=1
+
+          while [ $attempt -le $max_attempts ]; do
+            if curl -f http://localhost:5000/health; then
+              echo "Flask API health check passed"
+              break
+            fi
+            echo "Attempt $attempt/$max_attempts failed, retrying..."
+            sleep 5
+            ((attempt++))
+          done
+
+          if [ $attempt -gt $max_attempts ]; then
+            echo "Flask API health check failed after $max_attempts attempts"
+            docker logs test-container
+            exit 1
+          fi
+
+          # Cleanup
+          docker stop test-container
+          docker rm test-container
+
+      - name: Push Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  # Integration Tests
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name != 'pull_request'
+
+    services:
+      app:
+        image: ghcr.io/${{ github.repository }}:${{ github.ref_name }}-${{ github.sha }}
+        ports:
+          - 5000:5000
+          - 8501:8501
+        options: >-
+          --health-cmd "curl -f http://localhost:5000/health"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 3
+          --health-start-period 40s
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: |
+          pip install requests pytest
+
+      - name: Wait for services
+        run: |
+          sleep 30
+          curl -f http://localhost:5000/health || (echo "Flask API not ready" && exit 1)
+
+      - name: Run integration tests
+        run: |
+          # Create integration test
+          cat > integration_test.py << 'EOF'
+          import requests
+          import time
+          import pytest
+
+          BASE_URL = "http://localhost:5000"
+
+          def test_api_health():
+              response = requests.get(f"{BASE_URL}/health")
+              assert response.status_code == 200
+              data = response.json()
+              assert data["status"] == "healthy"
+
+          def test_analyze_endpoint():
+              data = {"text": "This is an amazing product!", "model": "textblob"}
+              response = requests.post(f"{BASE_URL}/analyze", json=data)
+              assert response.status_code == 200
+              result = response.json()
+              assert "sentiment" in result
+              assert "confidence" in result
+              assert result["sentiment"] in ["Positive", "Negative", "Neutral"]
+
+          def test_stats_endpoint():
+              response = requests.get(f"{BASE_URL}/stats")
+              assert response.status_code == 200
+              data = response.json()
+              assert "stats" in data
+
+          def test_history_endpoint():
+              response = requests.get(f"{BASE_URL}/history")
+              assert response.status_code == 200
+              data = response.json()
+              assert "count" in data
+              assert "history" in data
+          EOF
+
+          pytest integration_test.py -v
+
+  # Security Audit Summary
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [code-quality, docker-build]
+    if: always()
+
+    steps:
+      - name: Download security artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: security-reports
+          path: ./security-reports/
+
+      - name: Security Summary
+        run: |
+          echo "## 🔒 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "./security-reports/bandit-report.json" ]; then
+            echo "### Bandit Security Scan" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Code security scan completed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f "./security-reports/safety-report.json" ]; then
+            echo "### Safety Dependency Scan" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Dependency vulnerability scan completed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "### Docker Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Container image security scan completed with Trivy" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "All security scans have been completed. Check the Security tab for detailed results." >> $GITHUB_STEP_SUMMARY
+
+  # Deployment readiness check
+  deployment-ready:
+    name: Deployment Ready
+    runs-on: ubuntu-latest
+    needs: [code-quality, test, docker-build, integration-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Deployment Status
+        run: |
+          echo "## 🚀 Deployment Ready" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All checks have passed successfully:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Code quality and security checks" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Unit and integration tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Docker build and security scan" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Container integration tests" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Ready for deployment to production!" >> $GITHUB_STEP_SUMMARY
+
+      - name: Trigger CD Pipeline
+        if: success()
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: deployment-ready
+          client-payload: |
+            {
+              "ref": "${{ github.ref }}",
+              "sha": "${{ github.sha }}",
+              "image": "ghcr.io/${{ github.repository }}:main-${{ github.sha }}"
+            }

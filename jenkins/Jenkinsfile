@@ -1,0 +1,40 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Test') {
+            steps {
+                script {
+                    sh 'pip install -r requirements.txt'
+                    sh 'pip install pytest'
+                    sh 'pytest'
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GITHUB_TOKEN')]) {
+                        sh 'docker build -t ghcr.io/kaushik1919/auto-feedback:latest .'
+                        sh 'echo $GITHUB_TOKEN | docker login ghcr.io -u kaushik1919 --password-stdin'
+                        sh 'docker push ghcr.io/kaushik1919/auto-feedback:latest'
+                    }
+                }
+            }
+        }
+        stage('Deploy') {
+            steps {
+                input 'Deploy to production?'
+                script {
+                    withCredentials([
+                        sshUserPrivateKey(credentialsId: 'SSH_KEY', privateKeyVariable: 'SSH_PRIVATE_KEY_CONTENT'),
+                        aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        sh 'chmod +x scripts/deploy.sh'
+                        sh 'AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY SSH_PRIVATE_KEY=$SSH_PRIVATE_KEY_CONTENT ./scripts/deploy.sh'
+                    }
+                }
+            }
+        }
+    }
+}
