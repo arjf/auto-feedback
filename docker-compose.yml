@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   auto-feedback:
-    build: .
+    image: ghcr.io/arjf/auto-feedback:latest
     container_name: auto-feedback-app
     restart: unless-stopped
     ports:
