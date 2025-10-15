@@ -8,7 +8,7 @@ flask-cors==4.0.0
 # Sentiment Analysis Models
 textblob==0.17.1
 transformers==4.35.0
-torch==2.1.0
+torch==2.3.0
 
 # Data Processing
 pandas==2.1.3

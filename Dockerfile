@@ -1,22 +1,31 @@
-# Use Python 3.10 as base image
-FROM python:3.10-slim
+# Multi-stage build for better optimization
+FROM python:3.10-slim as base
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PIP_NO_CACHE_DIR=1 \
+  PIP_DISABLE_PIP_VERSION_CHECK=1 \
+  DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+  gcc \
+  g++ \
+  curl \
+  supervisor \
+  && rm -rf /var/lib/apt/lists/* \
+  && apt-get clean
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash app \
+  && mkdir -p /app /var/log/supervisor \
+  && chown -R app:app /app /var/log/supervisor
 
 # Set working directory
 WORKDIR /app
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first for better caching
+# Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
 # Install Python dependencies
@@ -27,22 +36,36 @@ RUN python -m textblob.download_corpora
 
 # Copy application code
 COPY app/ ./app/
+COPY start.sh ./
+
+# Create supervisord configuration
+RUN mkdir -p /etc/supervisor/conf.d
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Make scripts executable
+RUN chmod +x start.sh
+
+# Change ownership to app user
+RUN chown -R app:app /app
+
+# Configuration via environment variables
+ENV FLASK_HOST=0.0.0.0 \
+  FLASK_PORT=5000 \
+  FLASK_DEBUG=false \
+  STREAMLIT_HOST=0.0.0.0 \
+  STREAMLIT_PORT=8501 \
+  API_URL=http://localhost:5000
 
 # Expose ports
-# 5000 for Flask API
-# 8501 for Streamlit Dashboard
-EXPOSE 5000 8501
+EXPOSE $FLASK_PORT $STREAMLIT_PORT
 
-# Create a startup script
-RUN echo '#!/bin/bash\n\
-echo "Starting Flask API in background..."\n\
-cd /app && python app/main.py &\n\
-echo "Starting Streamlit Dashboard..."\n\
-cd /app && streamlit run app/dashboard.py --server.port=8501 --server.address=0.0.0.0\n\
-' > /app/start.sh && chmod +x /app/start.sh
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:$FLASK_PORT/health && \
+  curl -f http://localhost:$STREAMLIT_PORT/_stcore/health || exit 1
 
-# Default command runs Streamlit (can be overridden)
-CMD ["streamlit", "run", "app/dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Switch to non-root user
+USER app
 
-# Alternative: To run both Flask and Streamlit, use:
-# CMD ["/app/start.sh"]
+# Use supervisord to manage multiple processes
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
