@@ -237,7 +237,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-reports-${{ matrix.python-version }}
           path: |
@@ -467,18 +467,18 @@ jobs:
 
           if [ -f "./security-reports/bandit-report.json" ]; then
             echo "### Bandit Security Scan" >> $GITHUB_STEP_SUMMARY
-            echo "✅ Code security scan completed" >> $GITHUB_STEP_SUMMARY
+            echo " Code security scan completed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
           if [ -f "./security-reports/safety-report.json" ]; then
             echo "### Safety Dependency Scan" >> $GITHUB_STEP_SUMMARY
-            echo "✅ Dependency vulnerability scan completed" >> $GITHUB_STEP_SUMMARY
+            echo " Dependency vulnerability scan completed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
           echo "### Docker Security Scan" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Container image security scan completed with Trivy" >> $GITHUB_STEP_SUMMARY
+          echo " Container image security scan completed with Trivy" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "All security scans have been completed. Check the Security tab for detailed results." >> $GITHUB_STEP_SUMMARY
@@ -493,13 +493,13 @@ jobs:
     steps:
       - name: Deployment Status
         run: |
-          echo "## 🚀 Deployment Ready" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Ready" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All checks have passed successfully:" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Code quality and security checks" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Unit and integration tests" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Docker build and security scan" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Container integration tests" >> $GITHUB_STEP_SUMMARY
+          echo "-  Code quality and security checks" >> $GITHUB_STEP_SUMMARY
+          echo "-  Unit and integration tests" >> $GITHUB_STEP_SUMMARY
+          echo "-  Docker build and security scan" >> $GITHUB_STEP_SUMMARY
+          echo "-  Container integration tests" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Ready for deployment to production!" >> $GITHUB_STEP_SUMMARY
 

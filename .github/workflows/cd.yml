@@ -91,7 +91,7 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Container image validated: ${IMAGE_FULL}"
+          echo " Container image validated: ${IMAGE_FULL}"
 
       - name: Security pre-check
         run: |
@@ -106,7 +106,7 @@ jobs:
             # Add additional security checks for production
           fi
 
-          echo "✅ Security pre-checks completed"
+          echo " Security pre-checks completed"
 
   # Staging deployment
   deploy-staging:
@@ -188,7 +188,7 @@ jobs:
 
           while [ $attempt -le $max_attempts ]; do
             if nc -z ${INSTANCE_IP} 22; then
-              echo "✅ Instance is ready for SSH connections"
+              echo " Instance is ready for SSH connections"
               break
             fi
 
@@ -267,7 +267,7 @@ jobs:
 
             while [ $attempt -le $max_attempts ]; do
               if curl -f -s --max-time 10 "$url" > /dev/null; then
-                echo "✅ $name health check passed"
+                echo " $name health check passed"
                 return 0
               fi
 
@@ -293,7 +293,7 @@ jobs:
             -d '{"text": "This is a test message", "model": "textblob"}')
 
           if echo "$response" | jq -e '.sentiment' > /dev/null; then
-            echo "✅ Functional test passed"
+            echo " Functional test passed"
           else
             echo "::error::Functional test failed: $response"
             exit 1
@@ -305,7 +305,7 @@ jobs:
           STATUS="${{ steps.deploy.outputs.status }}"
 
           if [ "$STATUS" = "success" ] && [ "${{ job.status }}" = "success" ]; then
-            echo "## ✅ Staging Deployment Successful" >> $GITHUB_STEP_SUMMARY
+            echo "##  Staging Deployment Successful" >> $GITHUB_STEP_SUMMARY
             echo "- **Instance IP**: ${INSTANCE_IP}" >> $GITHUB_STEP_SUMMARY
             echo "- **API URL**: http://${INSTANCE_IP}:5000" >> $GITHUB_STEP_SUMMARY
             echo "- **Dashboard URL**: http://${INSTANCE_IP}:8501" >> $GITHUB_STEP_SUMMARY
@@ -348,7 +348,7 @@ jobs:
             **Deployment ID**: ${{ needs.pre-deployment.outputs.deployment_id }}
             **Triggered by**: ${{ github.actor }}
 
-            **Staging Results**: ✅ Passed
+            **Staging Results**:  Passed
 
             Please review and approve this production deployment.
           exclude-workflow-initiator-as-approver: false
@@ -399,7 +399,7 @@ jobs:
             cat rollback_data.json >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
 
-            echo "✅ Backup information captured"
+            echo " Backup information captured"
           else
             echo "⚠️ No existing production deployment found"
           fi
@@ -539,7 +539,7 @@ jobs:
 
               # API Health Check
               if curl -f -s --max-time 10 "$BASE_URL/health" | jq -e '.status == "healthy"' > /dev/null; then
-                echo "✅ API health check passed"
+                echo " API health check passed"
               else
                 echo "❌ API health check failed"
                 all_checks_passed=false
@@ -551,7 +551,7 @@ jobs:
                 -d '{"text": "This production deployment is working great!", "model": "textblob"}')
 
               if echo "$sentiment_response" | jq -e '.sentiment == "Positive"' > /dev/null; then
-                echo "✅ Sentiment analysis functional test passed"
+                echo " Sentiment analysis functional test passed"
               else
                 echo "❌ Sentiment analysis test failed: $sentiment_response"
                 all_checks_passed=false
@@ -564,7 +564,7 @@ jobs:
               local response_time=$(( (end_time - start_time) / 1000000 ))  # Convert to milliseconds
 
               if [ $response_time -lt 2000 ]; then  # Less than 2 seconds
-                echo "✅ Performance test passed (${response_time}ms)"
+                echo " Performance test passed (${response_time}ms)"
               else
                 echo "⚠️ Performance test warning: slow response (${response_time}ms)"
               fi
@@ -600,7 +600,7 @@ jobs:
             echo "🌐 Updating DNS records..."
             # This would typically update Route53 or your DNS provider
             # aws route53 change-resource-record-sets --hosted-zone-id $ZONE_ID ...
-            echo "✅ DNS and SSL configuration updated"
+            echo " DNS and SSL configuration updated"
           else
             echo "ℹ️ Single instance deployment - DNS update skipped"
           fi
@@ -628,7 +628,7 @@ jobs:
             --namespace "AutoFeedback/Deployments" \
             --metric-data MetricName=DeploymentSuccess,Value=1,Unit=Count,Dimensions=Environment=production
 
-          echo "✅ Monitoring setup completed"
+          echo " Monitoring setup completed"
 
       - name: Notify stakeholders
         if: always()
@@ -645,7 +645,7 @@ jobs:
             echo "- **Image**: ${{ needs.pre-deployment.outputs.image_full }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Endpoint**: ${{ env.endpoint }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Deployment ID**: ${{ needs.pre-deployment.outputs.deployment_id }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Health Status**: ✅ All checks passed" >> $GITHUB_STEP_SUMMARY
+            echo "- **Health Status**:  All checks passed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**URLs:**" >> $GITHUB_STEP_SUMMARY
             if [ "${{ env.endpoint_type }}" = "load_balancer" ]; then
@@ -731,7 +731,7 @@ jobs:
 
           rm -f /tmp/ssh_key
 
-          echo "✅ Rollback completed"
+          echo " Rollback completed"
 
       - name: Verify rollback
         run: |
@@ -753,10 +753,10 @@ jobs:
 
           # Basic health check
           if curl -f -s --max-time 10 "${BASE_URL}/health" > /dev/null; then
-            echo "✅ Rollback verification successful"
+            echo " Rollback verification successful"
             echo "## 🔄 Automatic Rollback Completed" >> $GITHUB_STEP_SUMMARY
             echo "- **Rolled back to**: ${{ needs.deploy-production.outputs.previous_image }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Service Status**: ✅ Healthy" >> $GITHUB_STEP_SUMMARY
+            echo "- **Service Status**:  Healthy" >> $GITHUB_STEP_SUMMARY
           else
             echo "::error::Rollback verification failed"
             echo "## ❌ Rollback Verification Failed" >> $GITHUB_STEP_SUMMARY
@@ -789,7 +789,7 @@ jobs:
           # - Temporary security groups
           # - Unused EBS snapshots
 
-          echo "✅ Cleanup completed"
+          echo " Cleanup completed"
 
       - name: Update deployment history
         run: |
