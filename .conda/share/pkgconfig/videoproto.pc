@@ -1,7 +1,0 @@
-prefix=/mnt/buoy/arnav/clones/auto-feedback/.conda
-includedir=${prefix}/include
-
-Name: VideoProto
-Description: Video extension headers
-Version: 2.3.3
-Cflags: -I${includedir}
